@@ -23,6 +23,7 @@ Experiment13_Security/
 ├── requirements.txt
 ├── database.py               # SQLite layer (parameterized/safe queries)
 ├── auth_server.py            # Core LoginServer: RBAC, sessions, lockout, audit log
+├── auth_gui.py                # Graphical interface (Tkinter) - login/register/dashboard
 ├── password_strength.py      # Activity 1
 ├── hash_comparison.py        # Activity 2
 ├── session_demo.py           # Activity 3
@@ -51,9 +52,38 @@ virtual environment instead.)
 - `cryptography` (Activity 7 encryption)
 - Everything else (sqlite3, hashlib, hmac, secrets) is standard library.
 
----
+## Graphical Interface
 
-## How to Run Everything
+For a live demo (e.g. for your lecturer), `auth_gui.py` provides a
+desktop GUI on top of the same `auth_server.py` backend used by every
+activity script above - nothing is duplicated, so behavior is identical
+to the console demos.
+
+```bash
+python3 auth_gui.py
+```
+
+**Screens:**
+- **Login** - enter a username/password (and OTP if MFA is enabled on
+  that account). Includes a "Reset Database" button for a clean demo.
+- **Register** - create an account, pick a role (student / lecturer /
+  admin), and optionally enable MFA (the OTP secret and a currently-valid
+  code are shown once, for demo purposes only).
+- **Dashboard** - shows your role and its permissions, lets you pick an
+  action (read/write/delete) and toggle "acting on my own file" to see
+  live ALLOWED/DENIED results exactly matching the permission matrix, and
+  includes a live **View Audit Log** window.
+
+**Requirements:** Tkinter ships with most Python installations. If you
+get `ModuleNotFoundError: No module named 'tkinter'` on Linux, install it
+with:
+```bash
+sudo apt-get install python3-tk
+```
+On Windows/macOS, Tkinter is normally already bundled with the standard
+Python installer.
+
+
 
 Run these from inside the `Experiment13_Security` folder:
 
