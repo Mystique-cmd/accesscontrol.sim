@@ -177,7 +177,7 @@ class RegisterFrame(tk.Frame):
         ttk.Combobox(
             form, textvariable=self.role_var, values=["student", "lecturer", "admin"],
             state="readonly", width=25,
-        ).grid(row=2, column=1, pady=5)
+        ).grid(row=4, column=1, pady=5)
 
         self.mfa_var = tk.BooleanVar(value=False)
         tk.Checkbutton(self, text="Enable Multi-Factor Authentication (TOTP)",
