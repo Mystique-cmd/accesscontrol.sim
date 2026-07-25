@@ -20,12 +20,15 @@ Run with:
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+import threading
+import time
 
 import auth_server
 from auth_server import LoginServer, AuthError
 import mfa_otp
 import database as db
 import password_strength as pw_strength
+import hash_comparison as hc
 
 
 class AuthGUI(tk.Tk):
@@ -50,7 +53,7 @@ class AuthGUI(tk.Tk):
         container.grid_columnconfigure(0, weight=1)
 
         self.frames = {}
-        for F in (LoginFrame, RegisterFrame, DashboardFrame):
+        for F in (LoginFrame, RegisterFrame, DashboardFrame, HashComparisonFrame):
             frame = F(container, self)
             self.frames[F.__name__] = frame
             frame.grid(row=0, column=0, sticky="nsew")
@@ -98,6 +101,8 @@ class LoginFrame(tk.Frame):
         tk.Label(self, text="Demo utility", font=("Helvetica", 10, "italic"), fg="gray").pack()
         tk.Button(self, text="Reset Database (wipes all users/logs)",
                   command=self.reset_database, fg="darkred").pack(pady=5)
+        tk.Button(self, text="Hash Comparison Demo (SHA256 vs bcrypt)",
+                  command=lambda: app.show_frame("HashComparisonFrame")).pack(pady=2)
 
     def on_show(self):
         self.status_label.config(text="")
@@ -348,6 +353,150 @@ class DashboardFrame(tk.Frame):
         self.app.current_username = None
         self.app.current_role = None
         self.app.show_frame("LoginFrame")
+
+
+class HashComparisonFrame(tk.Frame):
+    def __init__(self, parent, app: AuthGUI):
+        super().__init__(parent)
+        self.app = app
+
+        tk.Label(self, text="Password Hash Comparison", font=("Helvetica", 18, "bold")).pack(pady=(30, 10))
+        tk.Label(self, text="SHA-256 (fast, unsalted, deterministic) vs bcrypt (slow, salted, tunable)",
+                 font=("Helvetica", 10), fg="gray").pack(pady=(0, 10))
+
+        # Password input
+        input_frame = tk.Frame(self)
+        input_frame.pack(pady=10)
+
+        tk.Label(input_frame, text="Enter password:", font=("Helvetica", 11)).grid(row=0, column=0, padx=5, sticky="e")
+        self.password_var = tk.StringVar(value="MySecureP@ssw0rd!")
+        tk.Entry(input_frame, textvariable=self.password_var, width=36, font=("Courier", 10)).grid(row=0, column=1, padx=5)
+
+        tk.Button(self, text="Compare Now", command=self.run_comparison, width=20).pack(pady=10)
+
+        # Results area
+        results_frame = tk.Frame(self)
+        results_frame.pack(fill="x", padx=20, pady=10)
+
+        # SHA-256 section
+        sha_frame = tk.LabelFrame(results_frame, text="SHA-256", font=("Helvetica", 11, "bold"))
+        sha_frame.pack(fill="x", pady=5)
+
+        self.sha_hash_var = tk.StringVar(value="—")
+        tk.Label(sha_frame, text="Hash:", font=("Helvetica", 9, "bold")).grid(row=0, column=0, sticky="ne", padx=5, pady=2)
+        tk.Label(sha_frame, textvariable=self.sha_hash_var, font=("Courier", 8), wraplength=420, justify="left").grid(
+            row=0, column=1, sticky="w", padx=5, pady=2)
+
+        tk.Label(sha_frame, text="Time:", font=("Helvetica", 9, "bold")).grid(row=1, column=0, sticky="e", padx=5, pady=2)
+        self.sha_time_var = tk.StringVar(value="—")
+        tk.Label(sha_frame, textvariable=self.sha_time_var, font=("Courier", 10)).grid(row=1, column=1, sticky="w", padx=5, pady=2)
+
+        self.sha_bar = ttk.Progressbar(sha_frame, length=300, mode="determinate", value=0)
+        self.sha_bar.grid(row=2, column=1, sticky="w", padx=5, pady=(0, 5))
+
+        # bcrypt section
+        bcrypt_frame = tk.LabelFrame(results_frame, text="bcrypt (cost=12)", font=("Helvetica", 11, "bold"))
+        bcrypt_frame.pack(fill="x", pady=5)
+
+        self.bcrypt_hash_var = tk.StringVar(value="—")
+        tk.Label(bcrypt_frame, text="Hash:", font=("Helvetica", 9, "bold")).grid(row=0, column=0, sticky="ne", padx=5, pady=2)
+        tk.Label(bcrypt_frame, textvariable=self.bcrypt_hash_var, font=("Courier", 8), wraplength=420, justify="left").grid(
+            row=0, column=1, sticky="w", padx=5, pady=2)
+
+        tk.Label(bcrypt_frame, text="Time:", font=("Helvetica", 9, "bold")).grid(row=1, column=0, sticky="e", padx=5, pady=2)
+        self.bcrypt_time_var = tk.StringVar(value="—")
+        tk.Label(bcrypt_frame, textvariable=self.bcrypt_time_var, font=("Courier", 10)).grid(row=1, column=1, sticky="w", padx=5, pady=2)
+
+        self.bcrypt_bar = ttk.Progressbar(bcrypt_frame, length=300, mode="determinate", value=0)
+        self.bcrypt_bar.grid(row=2, column=1, sticky="w", padx=5, pady=(0, 5))
+
+        # Speed ratio
+        self.speed_ratio_var = tk.StringVar(value="")
+        tk.Label(self, textvariable=self.speed_ratio_var, font=("Helvetica", 11, "bold")).pack(pady=(5, 10))
+
+        # Status / Back
+        self.status_label = tk.Label(self, text="", fg="gray", font=("Helvetica", 10))
+        self.status_label.pack()
+
+        tk.Button(self, text="Back to Login", width=20,
+                  command=lambda: app.show_frame("LoginFrame")).pack(pady=10)
+
+    def on_show(self):
+        self.password_var.set("MySecureP@ssw0rd!")
+        self.sha_hash_var.set("—")
+        self.sha_time_var.set("—")
+        self.bcrypt_hash_var.set("—")
+        self.bcrypt_time_var.set("—")
+        self.speed_ratio_var.set("")
+        self.sha_bar["value"] = 0
+        self.bcrypt_bar["value"] = 0
+        self.status_label.config(text="")
+
+    def run_comparison(self):
+        password = self.password_var.get()
+        if not password:
+            self.status_label.config(text="Please enter a password.", fg="red")
+            return
+
+        # Reset outputs
+        self.sha_hash_var.set("Hashing...")
+        self.sha_time_var.set("")
+        self.bcrypt_hash_var.set("Hashing...")
+        self.bcrypt_time_var.set("")
+        self.speed_ratio_var.set("")
+        self.sha_bar["value"] = 0
+        self.bcrypt_bar["value"] = 0
+        self.status_label.config(text="Running comparison...", fg="blue")
+
+        # Run in thread so UI stays responsive during bcrypt's slow hashing
+        threading.Thread(target=self._do_comparison, args=(password,), daemon=True).start()
+
+    def _do_comparison(self, password: str):
+        try:
+            # SHA-256 timing
+            t0 = time.perf_counter()
+            sha_hash = hc.store_sha256(password)
+            sha_elapsed = (time.perf_counter() - t0) * 1000  # ms
+
+            # bcrypt timing
+            t0 = time.perf_counter()
+            bcrypt_hash = hc.store_bcrypt(password, cost=12)
+            bcrypt_elapsed = (time.perf_counter() - t0) * 1000  # ms
+
+            # Speed ratio
+            if sha_elapsed > 0:
+                ratio = bcrypt_elapsed / sha_elapsed
+            else:
+                ratio = float("inf")
+
+            # Update UI on main thread
+            self.after(0, self._display_results, sha_hash, sha_elapsed, bcrypt_hash, bcrypt_elapsed, ratio)
+        except Exception as e:
+            self.after(0, lambda: self.status_label.config(text=f"Error: {e}", fg="red"))
+
+    def _display_results(self, sha_hash: str, sha_ms: float, bcrypt_hash: str, bcrypt_ms: float, ratio: float):
+        self.sha_hash_var.set(sha_hash)
+        self.sha_time_var.set(f"{sha_ms:.4f} ms")
+
+        self.bcrypt_hash_var.set(bcrypt_hash)
+        self.bcrypt_time_var.set(f"{bcrypt_ms:.2f} ms")
+
+        # Progress bars: map times to 0-100 scale
+        # SHA-256 is very fast, so scale it relative to bcrypt
+        max_time = max(sha_ms, bcrypt_ms)
+        sha_val = min(100, sha_ms / max_time * 100)
+        bcrypt_val = min(100, bcrypt_ms / max_time * 100)
+        self.sha_bar["value"] = sha_val
+        self.bcrypt_bar["value"] = bcrypt_val
+
+        # Speed ratio display
+        if ratio == float("inf"):
+            ratio_str = "∞ (SHA-256 was effectively instant)"
+        else:
+            ratio_str = f"bcrypt is ~{ratio:,.0f}x slower than SHA-256 for this password"
+        self.speed_ratio_var.set(ratio_str)
+
+        self.status_label.config(text="✔ Comparison complete", fg="green")
 
 
 def main():
