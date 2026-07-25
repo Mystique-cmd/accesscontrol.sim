@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 import auth_server
 from auth_server import LoginServer, AuthError
+import database as db
 
 
 class TestRegistrationAndLogin(unittest.TestCase):
@@ -151,6 +152,55 @@ class TestBruteForceLockout(unittest.TestCase):
         time.sleep(1.2)
         token = self.srv.login("greg", "GregP@ss123")
         self.assertIsInstance(token, str)
+
+
+class TestPasswordStrengthOnRegistration(unittest.TestCase):
+
+    def setUp(self):
+        self.srv = LoginServer(db_path="test_auth.db", fresh=True)
+
+    def tearDown(self):
+        if os.path.exists("test_auth.db"):
+            os.remove("test_auth.db")
+
+    def test_weak_password_rejected(self):
+        """Passwords with entropy < 28 bits (e.g. '12345', 'abc') must be rejected."""
+        weak_passwords = [
+            ("user1", "12345"),
+            ("user2", "abc"),
+            ("user3", "a1b2"),
+            ("user4", "xy"),
+        ]
+        for username, pwd in weak_passwords:
+            with self.subTest(password=pwd):
+                with self.assertRaises(AuthError) as ctx:
+                    self.srv.register_user(username, pwd, "student")
+                self.assertIn("weak", str(ctx.exception).lower())
+
+    def test_medium_password_accepted(self):
+        """Medium-strength passwords (e.g. 'Password1') must be accepted."""
+        self.srv.register_user("alice", "Password1", "student")
+        # register_user returns None; verify by trying to log in
+        login_token = self.srv.login("alice", "Password1")
+        self.assertIsInstance(login_token, str)
+
+    def test_strong_password_accepted(self):
+        """Strong passwords with high entropy must be accepted."""
+        self.srv.register_user("bob", "Tr@il-Bl@zer#2026", "admin")
+        login_token = self.srv.login("bob", "Tr@il-Bl@zer#2026")
+        self.assertIsInstance(login_token, str)
+
+    def test_rejected_password_logged_in_audit(self):
+        """A rejected registration due to weak password must be logged in the audit log."""
+        try:
+            self.srv.register_user("dave", "12345", "student")
+        except AuthError:
+            pass
+
+        log = db.get_audit_log(self.srv.db_path)
+        relevant = [r for r in log if r["action"] == "REGISTER" and r["result"] == "REJECTED"]
+        self.assertEqual(len(relevant), 1, "Expected exactly one REJECTED registration event")
+        self.assertIn("weak", relevant[0]["detail"].lower())
 
 
 if __name__ == "__main__":

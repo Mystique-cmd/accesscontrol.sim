@@ -22,6 +22,7 @@ import time
 import bcrypt
 
 import database as db
+import password_strength as pw_strength
 
 # ---------- Permission matrix ----------
 # 'all'  -> always allowed
@@ -60,6 +61,20 @@ class LoginServer:
             raise AuthError(f"Unknown role: {role}")
         if db.get_user(username, self.db_path) is not None:
             raise AuthError(f"User '{username}' already exists")
+
+        # Password strength check — reject weak passwords
+        analysis = pw_strength.analyze(password)
+        if analysis["strength"] == "WEAK":
+            db.log_event(username, "REGISTER", "REJECTED",
+                         f"password too weak (entropy={analysis['entropy_bits']} bits, "
+                         f"crack_time={analysis['estimated_crack_time']})",
+                         self.db_path)
+            raise AuthError(
+                f"Password too weak. "
+                f"Entropy: {analysis['entropy_bits']} bits, "
+                f"estimated crack time: {analysis['estimated_crack_time']}. "
+                f"Use a longer password with mixed case, digits, and symbols."
+            )
 
         pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         db.insert_user(username, pw_hash, "bcrypt", role, mfa_secret, self.db_path)

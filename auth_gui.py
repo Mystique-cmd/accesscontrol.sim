@@ -25,6 +25,7 @@ import auth_server
 from auth_server import LoginServer, AuthError
 import mfa_otp
 import database as db
+import password_strength as pw_strength
 
 
 class AuthGUI(tk.Tk):
@@ -144,6 +145,13 @@ class RegisterFrame(tk.Frame):
         super().__init__(parent)
         self.app = app
 
+        # Register custom styles for the strength bar
+        style = ttk.Style(self)
+        style.theme_use("clam")
+        style.configure("WEAK.Horizontal.TProgressbar", background="red")
+        style.configure("MEDIUM.Horizontal.TProgressbar", background="orange")
+        style.configure("STRONG.Horizontal.TProgressbar", background="green")
+
         tk.Label(self, text="Register New Account", font=("Helvetica", 18, "bold")).pack(pady=(30, 10))
 
         form = tk.Frame(self)
@@ -156,8 +164,15 @@ class RegisterFrame(tk.Frame):
         tk.Label(form, text="Password:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
         self.password_var = tk.StringVar()
         tk.Entry(form, textvariable=self.password_var, show="*", width=28).grid(row=1, column=1, pady=5)
+        self.password_var.trace_add("write", self._update_strength_indicator)
 
-        tk.Label(form, text="Role:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
+        # Password strength indicator
+        self.strength_bar = ttk.Progressbar(form, length=180, mode="determinate", value=0)
+        self.strength_bar.grid(row=2, column=1, pady=(0, 2), sticky="w")
+        self.strength_label = tk.Label(form, text="", font=("Helvetica", 8))
+        self.strength_label.grid(row=3, column=1, sticky="w", padx=(5, 0))
+
+        tk.Label(form, text="Role:").grid(row=4, column=0, sticky="e", padx=5, pady=5)
         self.role_var = tk.StringVar(value="student")
         ttk.Combobox(
             form, textvariable=self.role_var, values=["student", "lecturer", "admin"],
@@ -181,6 +196,38 @@ class RegisterFrame(tk.Frame):
         self.password_var.set("")
         self.role_var.set("student")
         self.mfa_var.set(False)
+        self.strength_bar["value"] = 0
+        self.strength_label.config(text="")
+
+    def _update_strength_indicator(self, *_):
+        password = self.password_var.get()
+        if not password:
+            self.strength_bar["value"] = 0
+            self.strength_bar["style"] = ""
+            self.strength_label.config(text="")
+            return
+
+        analysis = pw_strength.analyze(password)
+        bits = analysis["entropy_bits"]
+        crack_time = analysis["estimated_crack_time"]
+        strength = analysis["strength"]
+
+        # Map entropy to a 0-100 bar value (capped at 60 bits = full bar)
+        bar_val = min(100, int(bits / 60 * 100))
+
+        if strength == "WEAK":
+            color = "red"
+            text = f"WEAK  ({bits} bits — {crack_time})"
+        elif strength == "MEDIUM":
+            color = "orange"
+            text = f"MEDIUM  ({bits} bits — {crack_time})"
+        else:
+            color = "green"
+            text = f"STRONG  ({bits} bits — {crack_time})"
+
+        self.strength_bar["value"] = bar_val
+        self.strength_bar["style"] = f"{strength}.Horizontal.TProgressbar"
+        self.strength_label.config(text=text, fg=color)
 
     def do_register(self):
         username = self.username_var.get().strip()
