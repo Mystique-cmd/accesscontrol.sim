@@ -1,0 +1,35 @@
+# Python compiled files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Test databases (generated at runtime)
+test_auth.db
+test_auth.db-journal
+
+# SQLite databases (generated at runtime)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE / editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Distribution / build
+dist/
+*.egg-info/
+
