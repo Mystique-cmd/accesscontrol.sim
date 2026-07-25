@@ -24,7 +24,7 @@ import threading
 import time
 
 import auth_server
-from auth_server import LoginServer, AuthError
+from auth_server import LoginServer, AuthError, SESSION_TTL_SECONDS, IDLE_TIMEOUT_SECONDS
 import mfa_otp
 import database as db
 import password_strength as pw_strength
@@ -58,6 +58,40 @@ class AuthGUI(tk.Tk):
             self.frames[F.__name__] = frame
             frame.grid(row=0, column=0, sticky="nsew")
 
+        self.show_frame("LoginFrame")
+
+        # Periodic session health check (every 2 seconds)
+        self.session_check_interval_ms = 2000
+        self.after(self.session_check_interval_ms, self._check_session_health)
+
+    def _check_session_health(self):
+        """Periodically check session expiry WITHOUT touching (resetting) idle timer.
+        Uses direct timestamp comparison to avoid interfering with idle timeout."""
+        if self.current_token is not None:
+            session = self.server.sessions.get(self.current_token)
+            if session is not None:
+                now = time.time()
+                ttl_remaining = SESSION_TTL_SECONDS - (now - session["issued_at"])
+                idle_remaining = IDLE_TIMEOUT_SECONDS - (now - session["last_activity"])
+
+                if ttl_remaining <= 0:
+                    self._force_logout("Session expired (absolute TTL of "
+                                       f"{SESSION_TTL_SECONDS}s exceeded).")
+                elif idle_remaining <= 0:
+                    self._force_logout("Session expired (idle timeout of "
+                                       f"{IDLE_TIMEOUT_SECONDS}s exceeded).")
+            else:
+                # Token is missing from server store (e.g. manual logout elsewhere)
+                self._force_logout("Session invalid — please log in again.")
+        self.after(self.session_check_interval_ms, self._check_session_health)
+
+    def _force_logout(self, reason: str):
+        """Log the user out and return to the login screen with a message."""
+        self.server.logout(self.current_token)
+        self.current_token = None
+        self.current_username = None
+        self.current_role = None
+        messagebox.showwarning("Session Expired", reason)
         self.show_frame("LoginFrame")
 
     def show_frame(self, name: str):
@@ -275,7 +309,11 @@ class DashboardFrame(tk.Frame):
         self.welcome_label.pack(pady=(20, 5))
 
         self.role_label = tk.Label(self, text="", font=("Helvetica", 11), fg="gray")
-        self.role_label.pack(pady=(0, 15))
+        self.role_label.pack(pady=(0, 5))
+
+        self.session_timer_label = tk.Label(self, text="", font=("Helvetica", 9), fg="blue")
+        self.session_timer_label.pack(pady=(0, 15))
+        self._timer_job = None
 
         tk.Label(self, text="Test a permission check:", font=("Helvetica", 12, "bold")).pack()
 
@@ -317,6 +355,58 @@ class DashboardFrame(tk.Frame):
         )
         self.result_label.config(text="")
 
+        # Start session countdown timer
+        self._update_session_timer()
+
+    def _update_session_timer(self):
+        """Update the session expiry / idle countdown display every second."""
+        # Cancel any pending update
+        if self._timer_job is not None:
+            self.after_cancel(self._timer_job)
+            self._timer_job = None
+
+        token = self.app.current_token
+        if token is None:
+            self.session_timer_label.config(text="")
+            return
+
+        session = self.app.server.sessions.get(token)
+        if session is None:
+            self.session_timer_label.config(text="Session invalid — please re-login", fg="red")
+            return
+
+        now = time.time()
+        issued_at = session["issued_at"]
+        last_activity = session["last_activity"]
+
+        ttl_remaining = SESSION_TTL_SECONDS - (now - issued_at)
+        idle_remaining = IDLE_TIMEOUT_SECONDS - (now - last_activity)
+
+        if ttl_remaining <= 0:
+            # Session expired — will be caught by the health check shortly
+            self.session_timer_label.config(
+                text="Session expired — auto-logging out...", fg="red"
+            )
+            return
+
+        if idle_remaining <= 0:
+            self.session_timer_label.config(
+                text="Idle timeout reached — auto-logging out...", fg="red"
+            )
+            return
+
+        # Format times nicely
+        ttl_m, ttl_s = divmod(int(ttl_remaining), 60)
+        idle_s = int(idle_remaining)
+
+        self.session_timer_label.config(
+            text=f"Session expires in {ttl_m}m {ttl_s}s  |  Idle timeout in {idle_s}s",
+            fg="blue" if idle_remaining > 10 else "orange",
+        )
+
+        # Re-schedule this method every 1 second
+        self._timer_job = self.after(1000, self._update_session_timer)
+
     def check_permission(self):
         action = self.action_var.get()
         is_owner = self.owner_var.get()
@@ -348,6 +438,10 @@ class DashboardFrame(tk.Frame):
             ))
 
     def do_logout(self):
+        # Cancel timer before switching frames
+        if self._timer_job is not None:
+            self.after_cancel(self._timer_job)
+            self._timer_job = None
         self.app.server.logout(self.app.current_token)
         self.app.current_token = None
         self.app.current_username = None

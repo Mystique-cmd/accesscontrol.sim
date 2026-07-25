@@ -1,21 +1,23 @@
-# Hash Comparison UI - Implementation Steps
+# Session Expiration & Auto-Logout Integration
 
-## Step 1: Add `HashComparisonFrame` to `auth_gui.py`
-- [x] Plan approved by user
-- [x] Create the new frame with password input, compare button, and result displays
-- [x] Use existing `hash_comparison.py` functions for SHA-256 and bcrypt hashing + timing
-- [x] Show side-by-side results with progress bars comparing speeds
+## Goal
+Integrate token expiration and automatic logout after inactivity into the GUI.
 
-## Step 2: Register frame in `AuthGUI.__init__`
-- [x] Add `HashComparisonFrame` to the frames dictionary
+## Implementation
 
-## Step 3: Add navigation button in `LoginFrame`
-- [x] Add "Hash Comparison Demo" button to the Demo utility section
+### 1. Periodic session health check in `AuthGUI` ✅
+- `_check_session_health()` runs every 2 seconds via `after()`.
+- Checks `ttl_remaining` and `idle_remaining` directly from session timestamps (without touching/resetting the idle timer).
+- Calls `_force_logout(reason)` when either expires.
 
-## Step 4: Add "Back to Login" button
-- [x] Navigation back to login from the hash comparison frame
+### 2. `_force_logout()` in `AuthGUI` ✅
+- Cleans up session state (token, username, role).
+- Shows a `messagebox.showwarning()` with the expiry reason.
+- Navigates to LoginFrame.
 
-## Step 5: Test
-- [x] Verify the app runs without import errors
-- [x] All imports and classes validated
+### 3. Session countdown display on `DashboardFrame` ✅
+- `_update_session_timer()` runs every 1 second.
+- Displays "Session expires in Xm Ys | Idle timeout in Zs".
+- Changes color to orange when idle < 10s.
+- Cleaned up `_timer_job` on logout.
 
